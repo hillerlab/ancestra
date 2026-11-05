@@ -1,0 +1,11 @@
+# Only what the build stage copies: the crate, the package and the license. No .git, no assets/, no weights.
+*
+!Cargo.toml
+!Cargo.lock
+!pyproject.toml
+!LICENSE
+!src
+**/__pycache__
+**/*.pyc
+**/*.so
+**/*.pt
