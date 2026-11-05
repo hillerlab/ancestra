@@ -7,7 +7,8 @@ name = "ancestra"
 version = "1.0.0"
 requires-python = ">=3.11"
 license = "GPL-3.0-only"
-license-files = ["LICENSE", "src/ancestra/_vendor/mamba_ssm/LICENSE", "src/ancestra/_vendor/causal_conv1d/LICENSE"]
+license-files = ["LICENSE", "src/ancestra/_vendor/mamba_ssm/LICENSE", "src/ancestra/_vendor/causal_conv1d/LICENSE",
+                 "src/ancestra/_vendor/causal_conv1d/AUTHORS"]
 dependencies = ["torch", "numpy", "einops", "packaging"]
 
 [project.scripts]
