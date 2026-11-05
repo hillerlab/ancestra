@@ -19,7 +19,12 @@
 #     ancestra -t genome.2bit -o out/genome --devices 0
 #   apptainer exec --nv "docker://$IMAGE" ancestra -t genome.2bit -o out/genome --devices 0
 #   Nextflow: container 'ghcr.io/hillerlab/ancestra:1.0.0' (the IMAGE) in the process, and in nextflow.config
-#             docker.runOptions = '--gpus all' or apptainer.runOptions = '--nv'.
+#             docker.runOptions = '--gpus all -u $(id -u):$(id -g)' or apptainer.runOptions = '--nv'.
+#             One GPU per task: omit --devices (it sets CUDA_VISIBLE_DEVICES itself); the task then runs on the GPU
+#             the scheduler made visible. Docker's --gpus all shows every host GPU, so under Docker forward the mask
+#             (docker.envWhitelist = 'CUDA_VISIBLE_DEVICES') or pass --gpus device=<id>. With --compile, give each
+#             task its own TORCHINDUCTOR_CACHE_DIR.
+#   The host's NVIDIA driver must support CUDA 12.8 (torch 2.10.0+cu128).
 
 # --- the wheel: the tested 1.0.0 recipe (pypa manylinux_2_28, Rust 1.92.0, maturin 1.15.0, remapped paths) ----------
 FROM quay.io/pypa/manylinux_2_28_x86_64@sha256:4131ddd7acb9c6c966af02fe7e71edc51e078c2d41f475966697676430bfa2ae AS build
@@ -48,7 +53,7 @@ RUN case "$ANCESTRA_GIT_SHA" in *[!0-9a-f]* | "") false ;; esac && [ "${#ANCESTR
 # python:3.11.11-slim-bookworm, its linux/amd64 manifest
 # (index sha256:081075da77b2b55c23c088251026fb69a7b2bf92471e491ff5fd75c192fd38e5)
 FROM python:3.11.11-slim-bookworm@sha256:a8e0a3090316aed0b11037aac613aef32fb1747dcc1dcb5c0f6c727a0113a07f AS runtime
-ENV PYTHONDONTWRITEBYTECODE=1 NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 # ps, for Nextflow's task metrics (bash and coreutils are in the base).
 RUN apt-get update \
@@ -75,17 +80,15 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu12
        "$sp/nvidia/cusolver/lib/libcusolverMg.so.11" \
  && rm -r "$sp/triton/backends/nvidia/lib/cupti" "$sp/triton/instrumentation"
 
-RUN --mount=type=bind,from=build,source=/dist,target=/dist \
-    pip install --no-cache-dir --no-deps /dist/ancestra-1.0.0-cp311-abi3-manylinux_2_28_x86_64.whl
-
-# The weights, baked in (compute nodes are often offline); a fetch error or a sha256 other than RELEASE.json's fails.
+# The weights, baked in (compute nodes are often offline), before the wheel, whose layer changes with every commit: a
+# rebuild reuses this layer while RELEASE.json and the URL stay. A fetch error or a sha256 other than RELEASE.json's
+# (read from a copy of the file) fails.
+COPY src/ancestra/data/RELEASE.json /opt/ancestra/RELEASE.json
 ARG ANCESTRA_WEIGHTS_URL=https://huggingface.co/alejandrogzi/ancestra/resolve/v1.0.0/ancestra-1.0.0.weights.pt
-RUN python - "$ANCESTRA_WEIGHTS_URL" /opt/ancestra/ancestra-1.0.0.weights.pt <<'PY'
-import hashlib, json, os, sys, urllib.request
-from ancestra import DATA_DIR
-url, dst = sys.argv[1:]
-want = json.load(open(os.path.join(DATA_DIR, "RELEASE.json")))["weights_sha256"]
-os.makedirs(os.path.dirname(dst))
+RUN python - "$ANCESTRA_WEIGHTS_URL" /opt/ancestra/RELEASE.json /opt/ancestra/ancestra-1.0.0.weights.pt <<'PY'
+import hashlib, json, sys, urllib.request
+url, release, dst = sys.argv[1:]
+want = json.load(open(release))["weights_sha256"]
 h = hashlib.sha256()
 with urllib.request.urlopen(url, timeout=60) as r, open(dst, "wb") as f:
     for block in iter(lambda: r.read(1 << 20), b""):
@@ -95,6 +98,9 @@ if h.hexdigest() != want:
     sys.exit(f"{url}: sha256 {h.hexdigest()} != RELEASE.json weights_sha256 {want}")
 PY
 ENV ANCESTRA_WEIGHTS=/opt/ancestra/ancestra-1.0.0.weights.pt
+
+RUN --mount=type=bind,from=build,source=/dist,target=/dist \
+    pip install --no-cache-dir --no-deps /dist/ancestra-1.0.0-cp311-abi3-manylinux_2_28_x86_64.whl
 
 # Caches under /tmp, one private directory per UID: the image is read-only, HOME may be unwritable or unmounted, and
 # users who share the host's /tmp (Apptainer binds it) must not share a cache, since Triton loads compiled launchers
@@ -115,14 +121,18 @@ if any(k not in os.environ for k, _ in _caches):
         os.environ.setdefault(k, os.path.join(_root, sub))
 PY
 
-# Build-time smoke, no GPU: the stamp names this commit and the sealed weights, the runtime imports, the caches resolve.
+# Build-time smoke, no GPU: the stamp names this commit (and says clean when ANCESTRA_GIT_DIRTY is 0) and the sealed
+# weights, the runtime imports, the caches resolve.
 ARG ANCESTRA_GIT_SHA
+ARG ANCESTRA_GIT_DIRTY=1
 LABEL org.opencontainers.image.source=https://github.com/hillerlab/ancestra \
       org.opencontainers.image.version=1.0.0 \
-      org.opencontainers.image.revision=$ANCESTRA_GIT_SHA
-RUN stamp="$(ancestra -V)" && echo "$stamp" \
- && case "$stamp" in "ancestra 1.0.0 git=$ANCESTRA_GIT_SHA "*) ;; \
-      *) echo "stamp does not name $ANCESTRA_GIT_SHA" >&2; exit 1 ;; esac \
+      org.opencontainers.image.revision=$ANCESTRA_GIT_SHA \
+      org.opencontainers.image.licenses=GPL-3.0-only
+RUN want="ancestra 1.0.0 git=$ANCESTRA_GIT_SHA " \
+ && if [ "$ANCESTRA_GIT_DIRTY" = 0 ]; then want="${want}rs=$ANCESTRA_GIT_SHA,clean "; fi \
+ && stamp="$(ancestra -V)" && echo "$stamp" \
+ && case "$stamp" in "$want"*) ;; *) echo "the stamp does not start with '$want'" >&2; exit 1 ;; esac \
  && python -c "import os, torch, triton; \
 assert os.environ['TRITON_CACHE_DIR'] == '/tmp/ancestra-%d/triton' % os.getuid()" \
  && rm -r "/tmp/ancestra-$(id -u)"
