@@ -1,0 +1,24 @@
+[build-system]
+requires = ["maturin>=1.9.6,<2"]
+build-backend = "maturin"
+
+[project]
+name = "ancestra"
+version = "1.0.0"
+requires-python = ">=3.11"
+license = "GPL-3.0-only"
+license-files = ["LICENSE", "src/ancestra/_vendor/mamba_ssm/LICENSE", "src/ancestra/_vendor/causal_conv1d/LICENSE"]
+dependencies = ["torch", "numpy", "einops", "packaging"]
+
+[project.scripts]
+ancestra = "ancestra.cli:main"
+
+[tool.maturin]
+features = ["python"]
+python-source = "src"
+module-name = "ancestra._native"
+compatibility = "manylinux_2_28"
+auditwheel = "repair"
+# sdist paths, then wheel paths: maturin matches each against its own layout
+exclude = ["src/ancestra/data/*.weights.pt", "src/**/__pycache__/**", "ancestra/data/*.weights.pt",
+           "ancestra/**/__pycache__/**"]
