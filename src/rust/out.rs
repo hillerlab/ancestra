@@ -1573,7 +1573,7 @@ const AUTOSQL: &str = r#"table ancestraTx
     uint   startShift;       "bp the start codon moved (0 if not)"
     uint   utr5Blocks;       "5' UTR exon pieces (0: no 5' UTR)"
     uint   utr3Blocks;       "3' UTR exon pieces (0: no 3' UTR)"
-    string utrDecoder;       "UTR decoders: 5' UTR decoder, 3' UTR DP attach"
+    string utrDecoder;       "UTR decoders: B5+DP3 = 5' UTR decoder, 3' UTR DP attach"
     string release;          "ancestra version"
     string ckptSha256;       "sha256 of the checkpoint"
     string paramsSha256;     "sha256 of the sealed params file"
