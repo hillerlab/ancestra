@@ -9,7 +9,7 @@ import os
 
 import numpy as np
 
-from ancestra import DATA_DIR
+from ancestra import DATA_DIR, _runtime
 from ancestra.decode import start_extend as se
 
 
@@ -112,7 +112,7 @@ def _downstream_candidates(genome, row):
     return out
 
 
-def _walk_boundary(genome, row, cache_entry, fen_lo, fen_hi, window):
+def _walk_boundary(genome, row, cache_entry, sizes, fen_lo, fen_hi, window):
     """Furthest in-frame boundary the registered upstream walk can reach."""
     chrom, strand = row["f"][0], row["f"][5]
     _g, gs, ge = cache_entry
@@ -129,7 +129,7 @@ def _walk_boundary(genome, row, cache_entry, fen_lo, fen_hi, window):
                 return a + 3
         return boundary
     e0 = row["te"]
-    hi = min(ge, int(genome.chrom_sizes()[chrom]), fen_hi, e0 + window)
+    hi = min(ge, int(sizes[chrom]), fen_hi, e0 + window)
     if e0 < gs or hi - e0 < 3:
         return e0
     seq = bytes(genome.fetch(chrom, e0, hi)).upper()
@@ -171,7 +171,7 @@ def make_table_records(row_name, vit_rows, sx_rows, genome, cache, wmax=3000):
     vby = {r["f"][3]: r for r in vit_rows}
     sby = {r["f"][3]: r for r in sx_rows}
     _require(vby.keys() == sby.keys(), "VIT and SX chain names differ")
-    sizes = genome.chrom_sizes()
+    sizes = _runtime.chrom_sizes(genome)
     _validate_cache(cache)
     for chrom in sorted({r["f"][0] for r in vit_rows}):
         _require(chrom in cache, "VIT chrom %s is absent from emit" % chrom)
@@ -189,8 +189,8 @@ def make_table_records(row_name, vit_rows, sx_rows, genome, cache, wmax=3000):
         sx = sby[row["f"][3]]
         _validate_pair(row, sx)
         s0, sx0 = _s0(row), _s0(sx)
-        up = se.candidates(genome, cache, row, f_lo[i], f_hi[i], wmax)
-        boundary = _walk_boundary(genome, row, cache[chrom], f_lo[i], f_hi[i], wmax)
+        up = se.candidates(genome, cache, row, f_lo[i], f_hi[i], wmax, sizes)
+        boundary = _walk_boundary(genome, row, cache[chrom], sizes, f_lo[i], f_hi[i], wmax)
         raw = [(s0, None)] + [(p[2], p) for p in up] + [(c, None) for c in _downstream_candidates(genome, row)]
         _require(len({c for c, _ in raw}) == len(raw), "%s: duplicate candidate" % row["f"][3])
         candidates = [c for c, _ in raw]

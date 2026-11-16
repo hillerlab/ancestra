@@ -10,7 +10,7 @@ import os
 
 import numpy as np
 
-from ancestra import _native
+from ancestra import _runtime
 
 STOPS = {b"TAA", b"TAG", b"TGA"}
 COMP = bytes.maketrans(b"ACGTNacgtn", b"TGCANtgcan")
@@ -85,13 +85,13 @@ def start_block_i(blocks, strand, ts, te):
     return len(blocks) - 1
 
 
-def candidates(genome, cache, row, fen_lo, fen_hi, window):
+def candidates(genome, cache, row, fen_lo, fen_hi, window, sizes):
     """[(distance, p, new_cds_boundary)] in-frame ATGs upstream of the current start, nearest first."""
     chrom, strand = row["f"][0], row["f"][5]
-    if chrom not in cache or chrom not in genome.chrom_sizes() or row["ts"] >= row["te"]:
+    if chrom not in cache or chrom not in sizes or row["ts"] >= row["te"]:
         return []
     g, gs, ge = cache[chrom]
-    size = int(genome.chrom_sizes()[chrom])
+    size = int(sizes[chrom])
     si = 0 if strand == "+" else 1
     out = []
     if strand == "+":
@@ -161,14 +161,15 @@ def apply_one(row, choice):
 
 def scan(bed, twobit, window, groups):
     """``groups``: the item's in-memory emissions {chrom: (start, utr7, c)} (the 5' UTR decoder's ``groups``), f16."""
-    genome = _native.Genome(twobit)
+    genome = _runtime.genome(twobit)
+    sizes = _runtime.chrom_sizes(genome)
     bad = sorted(k for k, (_s, _u, c) in groups.items() if c.dtype != np.float16)
     if bad:
         raise ValueError("in-memory emit for %s is not float16, the emit cache's dtype" % ", ".join(bad))
     cache = {k: ({"c": c}, s, s + c.shape[-1]) for k, (s, _u, c) in groups.items()}
     rows = read_bed(bed)
     fen_lo, fen_hi = fences(rows)
-    cands = [candidates(genome, cache, r, fen_lo[i], fen_hi[i], window) for i, r in enumerate(rows)]
+    cands = [candidates(genome, cache, r, fen_lo[i], fen_hi[i], window, sizes) for i, r in enumerate(rows)]
     return rows, cands
 
 

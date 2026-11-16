@@ -22,7 +22,7 @@ import sys
 import time
 from collections import Counter
 
-from ancestra import DATA_DIR, _native
+from ancestra import DATA_DIR, _native, _runtime
 from ancestra.io.items import _alt_ok, _item_name, _json_atomic, _output_fault, done_records, peak_rss_kb, run_items
 from ancestra.io.specs import lpt_shards, parse_specs, range_error
 
@@ -340,6 +340,8 @@ def build_parser():
     ap.add_argument("-o", "--out", default=None, help="outputs PREFIX.*, work dir PREFIX.parts/ (required)")
     ap.add_argument("--seqs", default=None, help="comma list of chrom or chrom:start-end (default: every 2bit sequence)")
     ap.add_argument("--seq-list", default=None, help="file: one spec per line, '#' comments; adds to --seqs")
+    ap.add_argument("--min-length", type=int, default=0, metavar="N",
+                    help="N >= 0; keep 2bit sequences of length >= N; also filters --seqs/--seq-list (default: 0)")
     ap.add_argument("--allow-missing", action="store_true",
                     help="skip specs absent from the 2bit or out of range instead of exiting with code 3")
     ap.add_argument("-f", "--format", action="append", default=None, metavar="LIST",
@@ -540,8 +542,8 @@ def finalize(plan):
         chosen.append(named[0])
     _warn_runtime(plan, chosen)
     try:
-        genome = _native.Genome(plan["twobit"])
-        sizes = genome.chrom_sizes()
+        genome = _runtime.genome(plan["twobit"])
+        sizes = _runtime.chrom_sizes(genome)
     except (OSError, ValueError) as e:
         die(f"{plan['twobit']}: {e}", EXIT_INTEGRITY)
     tx_parts = [os.path.join(parts, d["key"] + ".tx.tsv") for d in chosen]
@@ -644,6 +646,8 @@ def finalize(plan):
         "peak_rss_kb": peak_rss_kb(),
         "ram": list(plan["ram_lines"]),
     }
+    if plan.get("min_length") is not None:
+        prov["min_length"] = plan["min_length"]
     if plan.get("compile") is not None:
         prov["compile"] = plan["compile"]
     if alt:   # the counts per strand, summed over the items; the alt processes' peak and the largest window
@@ -680,6 +684,8 @@ def main(argv=None):
         die(f"--alt-threshold {threshold} is not in (0, 1]")
     if a.threads is not None and a.threads < 1:
         die(f"--threads {a.threads} is not a positive integer")
+    if a.min_length < 0:
+        die(f"--min-length {a.min_length} must be >= 0")
     formats = parse_list((a.format or []) + [n for n, on in (("gtf", a.gtf), ("gff", a.gff), ("bb", a.bb)) if on],
                          FORMAT_SPEC)
     if "bed" not in formats:                       # the BED12 is always written, whatever else is asked for
@@ -695,8 +701,8 @@ def main(argv=None):
     if not os.path.isfile(a.twobit):
         die(f"--twobit must name an existing file: {a.twobit}")
     try:
-        genome = _native.Genome(a.twobit)
-        sizes = genome.chrom_sizes()
+        genome = _runtime.genome(a.twobit)
+        sizes = _runtime.chrom_sizes(genome)
     except (OSError, ValueError) as e:
         die(f"ancestra: {a.twobit}: {e}", EXIT_INTEGRITY)
     specs = read_specs(a)                                    # items
@@ -713,6 +719,15 @@ def main(argv=None):
         items, bad = [(chrom, chrom, 0, size) for chrom, size in sorted(sizes.items())], []
         parsed_specs = [(item, item[1], "--seqs") for item in items]
     check_one_item_per_chrom(parsed_specs)
+    skipped = 0
+    if a.min_length:
+        kept = [item for item in items if sizes[item[1]] >= a.min_length]
+        skipped = len(items) - len(kept)
+        keep = {item[1] for item in kept}
+        items = kept
+        parsed_specs = [entry for entry in parsed_specs if entry[0][1] in keep]
+    if a.min_length and not a.no_merge:
+        print(f"min-length N={a.min_length}: skipped {skipped} sequence(s)", file=sys.stderr)
     spec_of = {item[1]: spec for item, spec, _ in parsed_specs}
     for spec, why in bad:
         print(f"{spec}: {why}", file=sys.stderr)
@@ -721,6 +736,8 @@ def main(argv=None):
               f"(--allow-missing skips them)", file=sys.stderr)
         raise SystemExit(EXIT_MISSING)
     if not items:
+        if skipped:
+            die("no sequence left to annotate after --min-length", EXIT_MISSING)
         die("no sequence left to annotate after --allow-missing", EXIT_MISSING)
     preflight_names(a.twobit, genome, [it[1] for it in items], formats)    # names: the chroms of the run's items
     facts = sealed_facts()
@@ -751,6 +768,7 @@ def main(argv=None):
         "twobit": os.path.abspath(a.twobit), "twobit_sha256": twobit_sha, "prefix": a.out,
         "items": [{"chrom": chrom, "start": rs, "end": re, "spec": spec_of.get(chrom, chrom)}
                   for _, chrom, rs, re in items],
+        "min_length": {"threshold": a.min_length, "skipped": skipped},
         "formats": formats, "tracks": bool(a.tracks), "track_features": features, "track_type": a.track_type or "bigwig",
         "devices": devs, "threads": a.threads, "weights": weights, "weights_sha256": weights_sha, "stamp": stamp,
         "params": facts["params"], "worker": a.worker, "n_workers": a.n_workers, "no_merge": bool(a.no_merge),

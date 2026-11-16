@@ -24,7 +24,7 @@ from contextlib import nullcontext
 
 import numpy as np
 
-from ancestra import DATA_DIR, _native
+from ancestra import DATA_DIR, _native, _runtime
 
 # Compared on resume. Timings and peak RSS are recorded and not compared: they are the run's
 # results. A skip also needs every recorded output on disk with its sha256 and record count; RAM bounds
@@ -352,7 +352,7 @@ def _start_and_b(vit, twobit, groups, start, dec, held, priors, sx_path, executo
         _die("L2 output or params are missing")
     chrom = next(iter(groups))
     item_start = groups[chrom][0]
-    genome = _native.Genome(twobit)
+    genome = _runtime.genome(twobit)
     _records, _choices, changes = lc.choose_item(vit, sx_path, l2_path, genome,
                                                   {chrom: (l2_cache, item_start, item_start + l2_cache["c"].shape[-1])},
                                                   os.path.basename(vit).removesuffix(".vit.bed"), int(l2["wmax"]))
@@ -700,7 +700,7 @@ def run_items(plan):
     model = infer.build_model(plan["weights"], recipe["label_tag"]).to(device)
     model = _maybe_enable_fast_kernels(model, device, recipe["window"], recipe["amp"],
                                        compile=plan.get("compile"))
-    genome = _native.Genome(plan["twobit"])
+    genome = _runtime.genome(plan["twobit"])
     refused = []
     done_n = 0
     dec_ex_ctx = nullcontext()

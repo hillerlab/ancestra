@@ -26,7 +26,7 @@ from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 
 import numpy as np
 
-from ancestra import _native
+from ancestra import _native, _runtime
 from ancestra.decode.tx import intron_ok, make_tx, merge, valid_isoform, vrow
 
 LOG_FLOOR = -69.0  # viterbi.LOG_FLOOR (~log 1e-30), keeps windows on -inf/nan emissions decodable
@@ -542,7 +542,7 @@ def run_item(ex, n_alt, twobit, item, vit, txs, changes, src, params, alt, T, pa
     by = {t["name"]: t for t in txs}
     if len(by) != len(txs) or set(by) != {v[0] for v in vit} or len(vit) != len(txs):
         raise ValueError(f"{item['chrom']}: the 5' UTR decoder's transcripts are not one per Viterbi primary")
-    genome = _native.Genome(twobit)
+    genome = _runtime.genome(twobit)
     chrom, start = item["chrom"], item["start"]
     wins = windows(vit, start, item["end"], alt["pool"]["flank"])
     counts = {"+": Counter(), "-": Counter()}
